@@ -3,36 +3,65 @@ This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 *******************************************************************************/
 
-#include "congestion_unaware/CongestionUnawareNetworkApi.hh"
-#include <cassert>
+#include "congestion_unaware/CongestionUnawareNetworkApi.hh" // 引入非拥塞感知网络 API 头文件
+#include <cassert> // 断言库，用于运行时检查
 
 using namespace AstraSim;
 using namespace AstraSimAnalyticalCongestionUnaware;
 using namespace NetworkAnalytical;
 using namespace NetworkAnalyticalCongestionUnaware;
 
+/**
+ * @class CongestionUnawareNetworkApi
+ * @brief 该类继承自 `CommonNetworkApi`，实现**非拥塞感知**的网络 API，不考虑网络负载。
+ */
+
+/** 
+ * @brief 静态变量定义
+ * `topology` 存储当前网络拓扑信息，该变量在所有 `CongestionUnawareNetworkApi` 实例间共享。
+ */
 std::shared_ptr<Topology> CongestionUnawareNetworkApi::topology;
 
+/**
+ * @brief 设置网络拓扑
+ * @param topology_ptr 指向 `Topology` 对象的共享指针
+ */
 void CongestionUnawareNetworkApi::set_topology(
     std::shared_ptr<Topology> topology_ptr) noexcept {
-    assert(topology_ptr != nullptr);
+    assert(topology_ptr != nullptr); // 确保拓扑对象指针不为空
 
-    // move topology
+    // 赋值给静态成员变量
     CongestionUnawareNetworkApi::topology = std::move(topology_ptr);
 
-    // set topology-related values
+    // 设置基于拓扑的网络参数
     CongestionUnawareNetworkApi::dims_count =
-        CongestionUnawareNetworkApi::topology->get_dims_count();
+        CongestionUnawareNetworkApi::topology->get_dims_count(); // 获取网络维度数
     CongestionUnawareNetworkApi::bandwidth_per_dim =
-        CongestionUnawareNetworkApi::topology->get_bandwidth_per_dim();
+        CongestionUnawareNetworkApi::topology->get_bandwidth_per_dim(); // 获取每个维度的带宽信息
 }
 
+/**
+ * @brief 构造函数
+ * @param rank 当前节点的 ID
+ */
 CongestionUnawareNetworkApi::CongestionUnawareNetworkApi(
     const int rank) noexcept
     : CommonNetworkApi(rank) {
-    assert(rank >= 0);
+    assert(rank >= 0); // 确保 rank 合法
 }
 
+/**
+ * @brief 发送数据（非拥塞感知）
+ * @param buffer 存储发送数据的缓冲区
+ * @param count 数据块大小
+ * @param type 数据类型
+ * @param dst 目标节点 ID
+ * @param tag 消息标签
+ * @param request 传输请求指针
+ * @param msg_handler 发送完成后的回调函数
+ * @param fun_arg 传递给回调函数的参数
+ * @return 操作状态（0 表示成功）
+ */
 int CongestionUnawareNetworkApi::sim_send(void* const buffer,
                                           const uint64_t count,
                                           const int type,
@@ -41,41 +70,40 @@ int CongestionUnawareNetworkApi::sim_send(void* const buffer,
                                           sim_request* const request,
                                           void (*msg_handler)(void*),
                                           void* const fun_arg) {
-    // query chunk id
+    // 获取当前节点 ID（源节点）
     const auto src = sim_comm_get_rank();
+
+    // 生成唯一的发送数据块 ID
     const auto chunk_id =
         CongestionUnawareNetworkApi::chunk_id_generator.create_send_chunk_id(
             tag, src, dst, count);
 
-    // search tracker
+    // 在回调追踪器中查找该数据块的回调条目
     const auto entry =
         callback_tracker.search_entry(tag, src, dst, count, chunk_id);
     if (entry.has_value()) {
-        // recv operation already issued.
-        // add send event handler to the tracker
+        // 如果 `recv` 操作已经被调用，则直接注册发送回调
         entry.value()->register_send_callback(msg_handler, fun_arg);
     } else {
-        // recv operation not issued yet
-        // create new entry and insert send callback
+        // 如果 `recv` 操作尚未调用，则创建新的条目，并注册发送回调
         auto* const new_entry =
             callback_tracker.create_new_entry(tag, src, dst, count, chunk_id);
         new_entry->register_send_callback(msg_handler, fun_arg);
     }
 
-    // create chunk
+    // 创建数据块传输参数
     auto chunk_arrival_arg = std::tuple(tag, src, dst, count, chunk_id);
     auto arg = std::make_unique<decltype(chunk_arrival_arg)>(chunk_arrival_arg);
-    const auto arg_ptr = static_cast<void*>(arg.release());
+    const auto arg_ptr = static_cast<void*>(arg.release()); // 转换为 void* 以便传递
 
-    // compute send communication delay (in AstraSim format)
-    const auto send_delay_ns = topology->send(src, dst, count);
+    // 计算发送通信延迟（单位：纳秒，符合 AstraSim 时间格式）
+    const auto send_delay_ns = topology->send(src, dst, count); // 获取拓扑发送延迟
     const auto send_delay = static_cast<double>(send_delay_ns);
-    const auto delta = timespec_t({NS, send_delay});
+    const auto delta = timespec_t({NS, send_delay}); // 生成时间间隔对象
 
-    // register chunk arrival event after send communication delay
+    // 发送完成后，在 `send_delay` 之后触发 `process_chunk_arrival` 事件
     sim_schedule(delta, CongestionUnawareNetworkApi::process_chunk_arrival,
                  arg_ptr);
 
-    // return
-    return 0;
+    return 0; // 返回成功状态
 }
