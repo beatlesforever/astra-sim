@@ -5,39 +5,53 @@ LICENSE file in the root directory of this source tree.
 
 #include "astra-sim/system/collective/DoubleBinaryTreeAllReduce.hh"
 
-#include "astra-sim/system/PacketBundle.hh"
-#include "astra-sim/system/RecvPacketEventHandlerData.hh"
+#include "astra-sim/system/PacketBundle.hh" // 负责数据包的封装和发送
+#include "astra-sim/system/RecvPacketEventHandlerData.hh" // 处理接收数据包的事件数据
 
 using namespace AstraSim;
 
+/**
+ * @brief DoubleBinaryTreeAllReduce 构造函数
+ * @param id 当前进程的唯一标识
+ * @param tree 二叉树结构，表示通信拓扑
+ * @param data_size 需要 All-Reduce 处理的数据大小
+ */
 DoubleBinaryTreeAllReduce::DoubleBinaryTreeAllReduce(int id,
                                                      BinaryTree* tree,
                                                      uint64_t data_size)
-    : Algorithm() {
-    this->id = id;
-    this->logical_topo = tree;
-    this->data_size = data_size;
-    this->state = State::Begin;
-    this->reductions = 0;
-    this->parent = tree->get_parent_id(id);
-    this->left_child = tree->get_left_child_id(id);
-    this->right_child = tree->get_right_child_id(id);
-    this->type = tree->get_node_type(id);
-    this->final_data_size = data_size;
-    this->comType = ComType::All_Reduce;
-    this->name = Name::DoubleBinaryTree;
+    : Algorithm() { // 调用基类 Algorithm 的构造函数
+    this->id = id; // 存储进程 ID
+    this->logical_topo = tree; // 存储二叉树拓扑
+    this->data_size = data_size; // 存储通信数据大小
+    this->state = State::Begin; // 初始化状态为 Begin
+    this->reductions = 0; // 归约次数设为 0
+    this->parent = tree->get_parent_id(id); // 获取当前节点的父节点 ID
+    this->left_child = tree->get_left_child_id(id); // 获取左子节点 ID
+    this->right_child = tree->get_right_child_id(id); // 获取右子节点 ID
+    this->type = tree->get_node_type(id); // 获取当前节点的类型（叶子、中间节点或根）
+    this->final_data_size = data_size; // 最终数据大小
+    this->comType = ComType::All_Reduce; // 通信类型设置为 All-Reduce
+    this->name = Name::DoubleBinaryTree; // 算法名称
 }
 
+/**
+ * @brief 运行双二叉树 All-Reduce 算法
+ * @param event 事件类型（如数据包接收、发送等）
+ * @param data 事件相关数据
+ */
 void DoubleBinaryTreeAllReduce::run(EventType event, CallData* data) {
+    // 叶子节点开始发送数据
+
     if (state == State::Begin && type == BinaryTree::Type::Leaf) {  // leaf.1
         (new PacketBundle(stream->owner, stream, false, false, data_size,
                           MemBus::Transmition::Usual))
             ->send_to_MA();
-        state = State::SendingDataToParent;
+        state = State::SendingDataToParent; // 更新状态：发送数据给父节点
 
     } else if (state == State::SendingDataToParent &&
                type == BinaryTree::Type::Leaf) {  // leaf.3
         // sending
+        // 发送数据到父节点
         sim_request snd_req;
         snd_req.srcRank = stream->owner->id;
         snd_req.dstRank = parent;
